@@ -1,0 +1,88 @@
+name: Module archive security precheck
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  precheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and unpack module archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            "https://raw.githubusercontent.com/uNEQUAL-codE/max/main/.last_version.zip" \
+            --output /tmp/module.zip
+          echo "Archive size:"
+          stat -c '%s bytes' /tmp/module.zip
+          echo "Archive integrity:"
+          unzip -t /tmp/module.zip
+          mkdir -p /tmp/module
+          unzip -q /tmp/module.zip -d /tmp/module
+          echo "Files in archive:"
+          find /tmp/module -type f -printf '%P\n' | sort | tee /tmp/file-list.txt
+          echo "File count: $(find /tmp/module -type f | wc -l)"
+
+      - name: PHP syntax check
+        shell: bash
+        run: |
+          set -uo pipefail
+          if ! find /tmp/module -type f -name '*.php' -print -quit | grep -q .; then
+            echo "No PHP files found in archive." | tee /tmp/php-lint.txt
+            exit 1
+          fi
+          sudo apt-get update
+          sudo apt-get install -y php-cli
+          : > /tmp/php-lint.txt
+          failed=0
+          while IFS= read -r -d '' file; do
+            if ! output="$(php -l "$file" 2>&1)"; then
+              printf 'FAIL: %s\n%s\n' "${file#/tmp/module/}" "$output" | tee -a /tmp/php-lint.txt
+              failed=1
+            else
+              printf 'OK: %s\n' "${file#/tmp/module/}" >> /tmp/php-lint.txt
+            fi
+          done < <(find /tmp/module -type f -name '*.php' -print0)
+          cat /tmp/php-lint.txt
+          exit "$failed"
+
+      - name: Build inspection report
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p reports
+          {
+            echo "# Module archive precheck"
+            echo
+            echo "- Source: uNEQUAL-codE/max, main/.last_version.zip"
+            echo "- Commit: $GITHUB_SHA"
+            echo "- Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "## Archive file list"
+            if [ -f /tmp/file-list.txt ]; then cat /tmp/file-list.txt; else echo "Archive extraction did not complete."; fi
+            echo
+            echo "## PHP syntax"
+            if [ -f /tmp/php-lint.txt ]; then cat /tmp/php-lint.txt; else echo "PHP lint did not run."; fi
+            echo
+            echo "## Scope limitation"
+            echo "This is an archive-integrity and PHP-syntax precheck only. It is not a full security audit and does not generate the Marketplace security-journal.json."
+          } > reports/module-precheck.md
+
+      - name: Upload precheck report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: module-precheck-report
+          path: |
+            reports/module-precheck.md
+            /tmp/file-list.txt
+            /tmp/php-lint.txt
+          if-no-files-found: warn
