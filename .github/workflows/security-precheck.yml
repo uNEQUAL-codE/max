@@ -107,4 +107,5 @@ jobs:
         with:
           name: extracted-module-source
           path: /tmp/module/
+          include-hidden-files: true
           if-no-files-found: error
