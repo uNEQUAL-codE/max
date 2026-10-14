@@ -54,6 +54,16 @@ jobs:
           cat /tmp/php-lint.txt
           exit "$failed"
 
+      - name: Run official deterministic recon
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/bitrix-tools/marketplace-security-skills.git /tmp/marketplace-security-skills
+          if [ -d /tmp/module/.last_version ]; then module_path=/tmp/module/.last_version; else module_path=/tmp/module; fi
+          python3 /tmp/marketplace-security-skills/skills/bitrix-security/scan/scripts/recon.py "$module_path" > /tmp/recon.txt
+          echo "Recon completed. Output lines: $(wc -l < /tmp/recon.txt)"
+
       - name: Build inspection report
         if: always()
         shell: bash
@@ -72,6 +82,9 @@ jobs:
             echo "## PHP syntax"
             if [ -f /tmp/php-lint.txt ]; then cat /tmp/php-lint.txt; else echo "PHP lint did not run."; fi
             echo
+            echo "## Official deterministic recon"
+            if [ -f /tmp/recon.txt ]; then cat /tmp/recon.txt; else echo "Recon did not run."; fi
+            echo
             echo "## Scope limitation"
             echo "This is an archive-integrity and PHP-syntax precheck only. It is not a full security audit and does not generate the Marketplace security-journal.json."
           } > reports/module-precheck.md
@@ -85,4 +98,13 @@ jobs:
             reports/module-precheck.md
             /tmp/file-list.txt
             /tmp/php-lint.txt
+            /tmp/recon.txt
           if-no-files-found: warn
+
+      - name: Upload extracted module for source review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extracted-module-source
+          path: /tmp/module/
+          if-no-files-found: error
